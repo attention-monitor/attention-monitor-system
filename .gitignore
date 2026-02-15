@@ -1,0 +1,19 @@
+# macOS
+.DS_Store
+~$*
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# IDE
+.idea/
+.vscode/
+
+# Temp files
+*.tmp
+
+# Large model files (track with Git LFS or download separately)
+# Models/EmotionXCeption/video.h5
+# Models/Landmarks/face_landmarks.dat

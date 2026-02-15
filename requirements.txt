@@ -1,0 +1,9 @@
+opencv-python==4.10.0.84
+numpy==1.24.3
+PyQt5==5.15.9
+mediapipe==0.10.11
+dlib==19.19.0
+scipy==1.10.1
+tensorflow==2.13.0
+imutils==0.5.4
+pyttsx3==2.99
