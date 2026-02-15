@@ -1,0 +1,879 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ADHD 注意力监测系统 v2.1</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f1923; color: #e0e0e0; overflow: hidden; height: 100vh; }
+
+/* Layout — 加宽侧栏以容纳公式和计算过程 */
+.container { display: grid; grid-template-columns: 1fr 460px; height: 100vh; gap: 0; }
+.video-area { position: relative; background: #000; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.sidebar { background: #1a2332; padding: 14px; overflow-y: auto; border-left: 1px solid #2a3a4a; display: flex; flex-direction: column; gap: 10px; }
+.sidebar::-webkit-scrollbar { width: 4px; }
+.sidebar::-webkit-scrollbar-thumb { background: #3a4a5a; border-radius: 2px; }
+
+/* Video */
+video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+canvas#overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
+
+/* Score Display */
+.score-overlay { position: absolute; top: 20px; left: 20px; z-index: 10; }
+.score-circle { width: 120px; height: 120px; border-radius: 50%; display: flex; flex-direction: column; align-items: center; justify-content: center; border: 4px solid; background: rgba(0,0,0,0.7); backdrop-filter: blur(8px); }
+.score-number { font-size: 42px; font-weight: 700; line-height: 1; }
+.score-label { font-size: 11px; opacity: 0.8; margin-top: 2px; }
+
+/* Status overlay */
+.status-overlay { position: absolute; top: 20px; right: 20px; z-index: 10; display: flex; flex-direction: column; gap: 6px; align-items: flex-end; }
+.status-tag { padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 600; background: rgba(0,0,0,0.7); backdrop-filter: blur(8px); }
+
+/* Start screen */
+.start-screen { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; background: rgba(15,25,35,0.95); z-index: 20; transition: opacity 0.5s; }
+.start-screen.hidden { opacity: 0; pointer-events: none; }
+.start-screen h1 { font-size: 28px; color: #4a9eff; margin-bottom: 8px; }
+.start-screen p { font-size: 14px; color: #8899aa; margin-bottom: 24px; }
+.btn-start { padding: 14px 48px; font-size: 16px; font-weight: 600; border: none; border-radius: 12px; background: #4a9eff; color: #fff; cursor: pointer; transition: all 0.2s; }
+.btn-start:hover { background: #3a8eef; transform: scale(1.02); }
+.btn-start:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
+
+/* Sidebar sections */
+.section { background: #1e2d3d; border-radius: 10px; padding: 12px; }
+.section-title { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: #6a8a9a; margin-bottom: 8px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
+.section-title .icon { font-size: 13px; }
+
+/* ===== 公式展示区 ===== */
+.formula-box { background: #0f1923; border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; border-left: 3px solid #4a9eff; }
+.formula-main { font-family: 'Courier New', monospace; font-size: 13px; color: #4a9eff; line-height: 1.6; }
+.formula-sub { font-family: 'Courier New', monospace; font-size: 11px; color: #8899aa; line-height: 1.5; margin-top: 4px; }
+.formula-note { font-size: 10px; color: #5a6a7a; margin-top: 6px; font-style: italic; }
+
+/* ===== 计算步骤 ===== */
+.calc-steps { display: flex; flex-direction: column; gap: 4px; }
+.calc-step { display: flex; align-items: center; gap: 8px; padding: 5px 8px; background: #0f1923; border-radius: 6px; font-size: 12px; font-family: 'Courier New', monospace; }
+.calc-step-num { width: 18px; height: 18px; border-radius: 50%; background: #2a3a4a; color: #8899aa; font-size: 10px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.calc-step-num.active { background: #4a9eff; color: #fff; }
+.calc-step-label { color: #8899aa; flex-shrink: 0; }
+.calc-step-expr { color: #e0e0e0; flex: 1; text-align: right; white-space: nowrap; overflow: hidden; }
+.calc-step-result { font-weight: 700; color: #4a9eff; flex-shrink: 0; min-width: 36px; text-align: right; }
+.calc-step.highlight { border: 1px solid #4a9eff44; }
+.calc-step.final { border: 1px solid #36d39944; background: #36d39910; }
+.calc-step.final .calc-step-result { color: #36d399; font-size: 14px; }
+.calc-arrow { text-align: center; color: #3a4a5a; font-size: 10px; line-height: 1; }
+
+/* ===== 六维评分增强 ===== */
+.dim-row { display: flex; align-items: center; gap: 6px; padding: 4px 0; font-size: 11px; }
+.dim-icon { font-size: 14px; flex-shrink: 0; }
+.dim-info { flex: 1; min-width: 0; }
+.dim-header { display: flex; justify-content: space-between; align-items: center; }
+.dim-name { color: #c0d0e0; font-weight: 500; }
+.dim-weight { color: #5a6a7a; font-size: 10px; }
+.dim-bar-track { height: 5px; background: #0f1923; border-radius: 3px; overflow: hidden; margin-top: 2px; }
+.dim-bar-fill { height: 100%; border-radius: 3px; transition: width 0.3s ease; }
+.dim-val { width: 42px; text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; flex-shrink: 0; font-size: 12px; }
+.dim-explain { font-size: 10px; color: #5a6a7a; margin-top: 1px; }
+
+/* ===== 阈值指示器 ===== */
+.threshold-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.threshold-item { background: #0f1923; border-radius: 6px; padding: 8px; display: flex; flex-direction: column; gap: 3px; }
+.threshold-label { font-size: 10px; color: #6a8a9a; text-transform: uppercase; letter-spacing: 0.5px; }
+.threshold-vals { display: flex; justify-content: space-between; align-items: center; }
+.threshold-current { font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.threshold-ref { font-size: 10px; color: #5a6a7a; }
+.threshold-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+.dot-pass { background: #36d399; box-shadow: 0 0 4px #36d39966; }
+.dot-fail { background: #ff4a4a; box-shadow: 0 0 4px #ff4a4a66; }
+
+/* ===== ADHD 检测面板 ===== */
+.adhd-panel { display: flex; flex-direction: column; gap: 6px; }
+.adhd-pattern { display: flex; align-items: center; gap: 8px; padding: 6px 8px; background: #0f1923; border-radius: 6px; border-left: 3px solid #3a4a5a; transition: border-color 0.3s; }
+.adhd-pattern.triggered { border-left-color: #ff4a4a; }
+.adhd-pattern-status { width: 8px; height: 8px; border-radius: 50%; background: #3a4a5a; flex-shrink: 0; transition: background 0.3s; }
+.adhd-pattern.triggered .adhd-pattern-status { background: #ff4a4a; box-shadow: 0 0 6px #ff4a4a88; }
+.adhd-pattern-info { flex: 1; }
+.adhd-pattern-name { font-size: 12px; color: #c0d0e0; font-weight: 500; }
+.adhd-pattern-desc { font-size: 10px; color: #5a6a7a; margin-top: 1px; }
+.adhd-pattern-val { font-size: 11px; font-weight: 600; color: #5a6a7a; min-width: 30px; text-align: right; }
+.adhd-pattern.triggered .adhd-pattern-val { color: #ff6a6a; }
+
+/* ===== Metric rows ===== */
+.metric { display: flex; justify-content: space-between; align-items: center; padding: 3px 0; font-size: 12px; }
+.metric-label { color: #8899aa; }
+.metric-value { font-weight: 600; font-variant-numeric: tabular-nums; }
+
+/* Chart */
+.chart-canvas { width: 100%; height: 80px; border-radius: 6px; background: #0f1923; }
+
+/* Controls */
+.controls { display: flex; gap: 6px; flex-wrap: wrap; }
+.btn-ctrl { padding: 6px 12px; font-size: 11px; border: 1px solid #3a4a5a; border-radius: 8px; background: transparent; color: #c0d0e0; cursor: pointer; transition: all 0.15s; }
+.btn-ctrl:hover { background: #2a3a4a; }
+.btn-ctrl.active { background: #4a9eff; border-color: #4a9eff; color: #fff; }
+.btn-ctrl.danger { border-color: #ff4a4a; color: #ff6a6a; }
+.btn-ctrl.danger:hover { background: #ff4a4a22; }
+.btn-ctrl.export { border-color: #36d399; color: #36d399; }
+.btn-ctrl.export:hover { background: #36d39922; }
+
+/* Voice reminder indicator */
+.voice-indicator { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 15; padding: 10px 24px; border-radius: 24px; background: rgba(255,100,50,0.9); color: #fff; font-size: 14px; font-weight: 600; opacity: 0; transition: opacity 0.3s; pointer-events: none; }
+.voice-indicator.show { opacity: 1; }
+
+/* ADHD alert overlay */
+.adhd-alert-overlay { position: absolute; bottom: 60px; left: 50%; transform: translateX(-50%); z-index: 15; padding: 6px 16px; border-radius: 16px; background: rgba(255,180,0,0.85); color: #1a1a1a; font-size: 12px; font-weight: 600; opacity: 0; transition: opacity 0.3s; pointer-events: none; white-space: nowrap; }
+.adhd-alert-overlay.show { opacity: 1; }
+
+/* Loading */
+.loading-bar { width: 200px; height: 4px; background: #2a3a4a; border-radius: 2px; margin-top: 16px; overflow: hidden; display: none; }
+.loading-bar.active { display: block; }
+.loading-bar-fill { width: 0%; height: 100%; background: #4a9eff; border-radius: 2px; transition: width 0.3s; }
+
+/* Responsive */
+@media (max-width: 900px) {
+  .container { grid-template-columns: 1fr; grid-template-rows: 45vh 1fr; }
+  .sidebar { border-left: none; border-top: 1px solid #2a3a4a; }
+}
+</style>
+</head>
+<body>
+
+<div class="container">
+  <div class="video-area">
+    <video id="webcam" autoplay playsinline></video>
+    <canvas id="overlay"></canvas>
+
+    <div class="start-screen" id="startScreen">
+      <h1>ADHD 注意力监测系统</h1>
+      <p>基于 AI 的实时注意力与行为分析 · 适用于在线课堂场景</p>
+      <button class="btn-start" id="btnStart">启动摄像头</button>
+      <div class="loading-bar" id="loadingBar"><div class="loading-bar-fill" id="loadingBarFill"></div></div>
+    </div>
+
+    <div class="score-overlay" id="scoreOverlay" style="display:none;">
+      <div class="score-circle" id="scoreCircle">
+        <div class="score-number" id="scoreNumber">--</div>
+        <div class="score-label">注意力分数</div>
+      </div>
+    </div>
+
+    <div class="status-overlay" id="statusOverlay" style="display:none;">
+      <div class="status-tag" id="attentionTag">--</div>
+      <div class="status-tag" id="fpsTag">-- FPS</div>
+      <div class="status-tag" id="sessionTag" style="font-size:10px;">--:--:--</div>
+    </div>
+
+    <div class="voice-indicator" id="voiceIndicator">正在提醒...</div>
+    <div class="adhd-alert-overlay" id="adhdAlertOverlay"></div>
+  </div>
+
+  <!-- ================================================================ -->
+  <!-- 侧栏 — 展示公式、计算过程、核心算法 -->
+  <!-- ================================================================ -->
+  <div class="sidebar">
+
+    <!-- ① 论文公式 14 -->
+    <div class="section">
+      <div class="section-title"><span class="icon">f</span> 论文公式 14 — 注意力评分模型</div>
+      <div class="formula-box">
+        <div class="formula-main">S<sub>att</sub>(t) = S<sub>base</sub> + δ<sub>emotion</sub> + δ<sub>ADHD</sub></div>
+        <div class="formula-sub">S<sub>base</sub> = w₁·Eye + w₂·Gaze + w₃·Head + w₄·Duration + w₅·Blink + w₆·Motor</div>
+        <div class="formula-note">论文原式为减法 (100→0)，代码等价实现为加法 (0→100)，最终经非线性缩放映射到 [0,100]</div>
+      </div>
+    </div>
+
+    <!-- ② 实时计算过程 -->
+    <div class="section">
+      <div class="section-title"><span class="icon">⚙</span> 实时计算过程</div>
+      <div class="calc-steps" id="calcSteps">
+        <div class="calc-step highlight">
+          <span class="calc-step-num active">1</span>
+          <span class="calc-step-label">S_base</span>
+          <span class="calc-step-expr" id="cs-base-expr">= 0+0+0+0+0+0</span>
+          <span class="calc-step-result" id="cs-base">=0</span>
+        </div>
+        <div class="calc-arrow">↓</div>
+        <div class="calc-step">
+          <span class="calc-step-num active">2</span>
+          <span class="calc-step-label">+情绪</span>
+          <span class="calc-step-expr" id="cs-emo-expr">Web版暂无情绪模型</span>
+          <span class="calc-step-result" id="cs-emo">+0</span>
+        </div>
+        <div class="calc-arrow">↓</div>
+        <div class="calc-step">
+          <span class="calc-step-num active">3</span>
+          <span class="calc-step-label">+ADHD</span>
+          <span class="calc-step-expr" id="cs-adhd-expr">DSM-5 行为模式检测</span>
+          <span class="calc-step-result" id="cs-adhd">+0</span>
+        </div>
+        <div class="calc-arrow">↓</div>
+        <div class="calc-step">
+          <span class="calc-step-num active">4</span>
+          <span class="calc-step-label">缩放</span>
+          <span class="calc-step-expr" id="cs-scale-expr">nonlinear(0)</span>
+          <span class="calc-step-result" id="cs-scale">=0</span>
+        </div>
+        <div class="calc-arrow">↓</div>
+        <div class="calc-step final">
+          <span class="calc-step-num active">5</span>
+          <span class="calc-step-label">最终</span>
+          <span class="calc-step-expr">clamp [0, 100]</span>
+          <span class="calc-step-result" id="cs-final">0</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ③ 六维子评分详解 -->
+    <div class="section">
+      <div class="section-title"><span class="icon">◉</span> 六维子评分 (权重总和 = 100)</div>
+
+      <div class="dim-row">
+        <span class="dim-icon">👁</span>
+        <div class="dim-info">
+          <div class="dim-header"><span class="dim-name">眼睛睁开度</span><span class="dim-weight">w₁ 满分25</span></div>
+          <div class="dim-bar-track"><div class="dim-bar-fill" id="bar-eye" style="width:0%;background:#4a9eff"></div></div>
+          <div class="dim-explain" id="exp-eye">EAR(眼睛纵横比) ≥ 0.22 → 满分区</div>
+        </div>
+        <span class="dim-val" id="val-eye">0/25</span>
+      </div>
+
+      <div class="dim-row">
+        <span class="dim-icon">🎯</span>
+        <div class="dim-info">
+          <div class="dim-header"><span class="dim-name">视线稳定性</span><span class="dim-weight">w₂ 满分20</span></div>
+          <div class="dim-bar-track"><div class="dim-bar-fill" id="bar-gaze" style="width:0%;background:#36d399"></div></div>
+          <div class="dim-explain" id="exp-gaze">虹膜偏移量 ≤ 0.15 → 满分区</div>
+        </div>
+        <span class="dim-val" id="val-gaze">0/20</span>
+      </div>
+
+      <div class="dim-row">
+        <span class="dim-icon">🗣</span>
+        <div class="dim-info">
+          <div class="dim-header"><span class="dim-name">头部稳定性</span><span class="dim-weight">w₃ 满分15</span></div>
+          <div class="dim-bar-track"><div class="dim-bar-fill" id="bar-head" style="width:0%;background:#f59e0b"></div></div>
+          <div class="dim-explain" id="exp-head">yaw+pitch 偏移 ≤ 8° → 满分区</div>
+        </div>
+        <span class="dim-val" id="val-head">0/15</span>
+      </div>
+
+      <div class="dim-row">
+        <span class="dim-icon">⏱</span>
+        <div class="dim-info">
+          <div class="dim-header"><span class="dim-name">持续专注时长</span><span class="dim-weight">w₄ 满分20</span></div>
+          <div class="dim-bar-track"><div class="dim-bar-fill" id="bar-duration" style="width:0%;background:#a78bfa"></div></div>
+          <div class="dim-explain" id="exp-duration">连续专注 ≥ 10s → 满分区</div>
+        </div>
+        <span class="dim-val" id="val-duration">0/20</span>
+      </div>
+
+      <div class="dim-row">
+        <span class="dim-icon">👀</span>
+        <div class="dim-info">
+          <div class="dim-header"><span class="dim-name">眨眼模式</span><span class="dim-weight">w₅ 满分10</span></div>
+          <div class="dim-bar-track"><div class="dim-bar-fill" id="bar-blink" style="width:0%;background:#f472b6"></div></div>
+          <div class="dim-explain" id="exp-blink">正常频率 10~30次/分 → 满分区</div>
+        </div>
+        <span class="dim-val" id="val-blink">0/10</span>
+      </div>
+
+      <div class="dim-row">
+        <span class="dim-icon">💺</span>
+        <div class="dim-info">
+          <div class="dim-header"><span class="dim-name">运动躁动度</span><span class="dim-weight">w₆ 满分10</span></div>
+          <div class="dim-bar-track"><div class="dim-bar-fill" id="bar-motor" style="width:0%;background:#fb923c"></div></div>
+          <div class="dim-explain" id="exp-motor">微动频率 < 1.5次/5s → 满分区</div>
+        </div>
+        <span class="dim-val" id="val-motor">0/10</span>
+      </div>
+    </div>
+
+    <!-- ④ 核心阈值实时对照 -->
+    <div class="section">
+      <div class="section-title"><span class="icon">⊘</span> 核心阈值实时对照 (来自 AttentionConfig)</div>
+      <div class="threshold-grid">
+        <div class="threshold-item">
+          <span class="threshold-label">EAR 左眼</span>
+          <div class="threshold-vals">
+            <span class="threshold-current" id="th-ear-l">0.000</span>
+            <span class="threshold-dot dot-pass" id="dot-ear-l"></span>
+          </div>
+          <span class="threshold-ref">阈值: > 0.21 = 睁眼</span>
+        </div>
+        <div class="threshold-item">
+          <span class="threshold-label">EAR 右眼</span>
+          <div class="threshold-vals">
+            <span class="threshold-current" id="th-ear-r">0.000</span>
+            <span class="threshold-dot dot-pass" id="dot-ear-r"></span>
+          </div>
+          <span class="threshold-ref">阈值: > 0.21 = 睁眼</span>
+        </div>
+        <div class="threshold-item">
+          <span class="threshold-label">Yaw 左右转头</span>
+          <div class="threshold-vals">
+            <span class="threshold-current" id="th-yaw">0.0°</span>
+            <span class="threshold-dot dot-pass" id="dot-yaw"></span>
+          </div>
+          <span class="threshold-ref">阈值: |yaw| < 20° = 正面</span>
+        </div>
+        <div class="threshold-item">
+          <span class="threshold-label">Pitch 上下点头</span>
+          <div class="threshold-vals">
+            <span class="threshold-current" id="th-pitch">0.0°</span>
+            <span class="threshold-dot dot-pass" id="dot-pitch"></span>
+          </div>
+          <span class="threshold-ref">阈值: |pitch| < 20° = 正面</span>
+        </div>
+        <div class="threshold-item">
+          <span class="threshold-label">视线 X 偏移</span>
+          <div class="threshold-vals">
+            <span class="threshold-current" id="th-gaze-x">0.000</span>
+            <span class="threshold-dot dot-pass" id="dot-gaze-x"></span>
+          </div>
+          <span class="threshold-ref">阈值: |x| < 0.35 = 居中</span>
+        </div>
+        <div class="threshold-item">
+          <span class="threshold-label">视线 Y 偏移</span>
+          <div class="threshold-vals">
+            <span class="threshold-current" id="th-gaze-y">0.000</span>
+            <span class="threshold-dot dot-pass" id="dot-gaze-y"></span>
+          </div>
+          <span class="threshold-ref">阈值: |y| < 0.35 = 居中</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ⑤ ADHD 行为特征检测 (DSM-5) -->
+    <div class="section">
+      <div class="section-title"><span class="icon">⚠</span> ADHD 行为特征检测 (DSM-5 三模式)</div>
+      <div class="adhd-panel">
+        <div class="adhd-pattern" id="adhd-p1">
+          <div class="adhd-pattern-status"></div>
+          <div class="adhd-pattern-info">
+            <div class="adhd-pattern-name">模式1: 连续分心</div>
+            <div class="adhd-pattern-desc">最近 3 帧全部非"专注" → 扣 5 分</div>
+          </div>
+          <div class="adhd-pattern-val" id="adhd-p1-val">0</div>
+        </div>
+        <div class="adhd-pattern" id="adhd-p2">
+          <div class="adhd-pattern-status"></div>
+          <div class="adhd-pattern-info">
+            <div class="adhd-pattern-name">模式2: 情绪波动</div>
+            <div class="adhd-pattern-desc">情绪快速切换 → 扣 4 分 (Web版暂未启用)</div>
+          </div>
+          <div class="adhd-pattern-val" id="adhd-p2-val">—</div>
+        </div>
+        <div class="adhd-pattern" id="adhd-p3">
+          <div class="adhd-pattern-status"></div>
+          <div class="adhd-pattern-info">
+            <div class="adhd-pattern-name">模式3: 注意力频繁转移</div>
+            <div class="adhd-pattern-desc">20 帧内 "分心↔专注" 切换 ≥ 5 次 → 扣 3 分</div>
+          </div>
+          <div class="adhd-pattern-val" id="adhd-p3-val">0</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ⑥ MediaPipe 478 点感知层 -->
+    <div class="section">
+      <div class="section-title"><span class="icon">△</span> 感知层: MediaPipe FaceMesh 478 点</div>
+      <div style="font-size:11px; color:#6a8a9a; line-height:1.5;">
+        <div class="metric"><span class="metric-label">眨眼次数</span><span class="metric-value" id="m-blinks">0</span></div>
+        <div class="metric"><span class="metric-label">持续专注时长</span><span class="metric-value" id="m-focus-dur">0.0s</span></div>
+        <div class="metric"><span class="metric-label">微动计数</span><span class="metric-value" id="m-micro">0</span></div>
+        <div style="margin-top:6px; font-size:10px; color:#4a6a7a; line-height:1.4;">
+          输入: 摄像头 640×480 → MediaPipe FaceMesh (refineLandmarks=true) → 478个3D面部关键点 → 包含虹膜追踪 (点468-477) → 分析 EAR/头部姿态/视线向量
+        </div>
+      </div>
+    </div>
+
+    <!-- ⑦ 统计 + 趋势 -->
+    <div class="section">
+      <div class="section-title"><span class="icon">📊</span> 统计信息</div>
+      <div class="metric"><span class="metric-label">平均分数</span><span class="metric-value" id="m-avg">--</span></div>
+      <div class="metric"><span class="metric-label">专注率 (≥70分)</span><span class="metric-value" id="m-focus-pct">--</span></div>
+      <div class="metric"><span class="metric-label">最长连续专注</span><span class="metric-value" id="m-longest">--</span></div>
+      <div class="metric"><span class="metric-label">专注中断次数</span><span class="metric-value" id="m-interrupts">0</span></div>
+      <div class="metric"><span class="metric-label">ADHD 触发事件</span><span class="metric-value" id="m-adhd-events">0</span></div>
+      <div class="metric"><span class="metric-label">语音提醒次数</span><span class="metric-value" id="m-voice-count">0</span></div>
+    </div>
+
+    <div class="section">
+      <div class="section-title"><span class="icon">〰</span> 注意力趋势</div>
+      <canvas class="chart-canvas" id="historyChart"></canvas>
+    </div>
+
+    <!-- ⑧ 控制 -->
+    <div class="section">
+      <div class="section-title"><span class="icon">⊞</span> 控制</div>
+      <div class="controls">
+        <button class="btn-ctrl active" id="btnVoice" onclick="AttentionMonitor.toggleVoice()">语音提醒</button>
+        <button class="btn-ctrl" id="btnLandmarks" onclick="AttentionMonitor.toggleLandmarks()">特征点</button>
+        <button class="btn-ctrl export" id="btnExport" onclick="AttentionMonitor.exportReport()">导出报告</button>
+        <button class="btn-ctrl danger" id="btnReset" onclick="AttentionMonitor.resetStats()">重置</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- MediaPipe FaceMesh (script 标签加载，兼容所有浏览器) -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+
+<script>
+// ============================================================================
+// AttentionMonitor SDK v2.1
+// ============================================================================
+var AttentionMonitor = (function() {
+  'use strict';
+
+  var sdk = {
+    version: '2.1.0',
+    running: false,
+    sessionStartTime: null,
+    showLandmarks: false,
+    voiceEnabled: true,
+    _callbacks: {},
+    on: function(event, fn) { if (!this._callbacks[event]) this._callbacks[event] = []; this._callbacks[event].push(fn); },
+    _emit: function(event, data) { var cbs = this._callbacks[event] || []; for (var i = 0; i < cbs.length; i++) cbs[i](data); }
+  };
+
+  // === 常量 (与 ui.py 一致) ===
+  var R_EYE = [33, 160, 158, 133, 153, 144];
+  var L_EYE = [362, 385, 387, 263, 373, 380];
+  var POSE_LANDMARKS = { nose_tip: 1, chin: 152, left_eye_outer: 263, right_eye_outer: 33, left_mouth: 291, right_mouth: 61 };
+  var RIGHT_IRIS = [468, 469, 470, 471, 472];
+  var LEFT_IRIS = [473, 474, 475, 476, 477];
+
+  // === AttentionConfig (ui.py 第 50-60 行) ===
+  var config = { ear_thresh: 0.21, ear_consec_frames: 1, yaw_thresh_deg: 20.0, pitch_thresh_deg: 20.0, roll_thresh_deg: 25.0, gaze_off_center: 0.35, min_face_conf: 0.5 };
+
+  // === AttentionAnalyzer (ui.py 第 92-311 行) ===
+  var attentionAnalyzer = {
+    closed_counter: 0, blinks: 0,
+    ear_history: [], gaze_history: [], pose_history: [],
+    current_state: { attention_label: '初始化中', ear_left: 0, ear_right: 0, yaw: 0, pitch: 0, roll: 0, gaze_x: 0, gaze_y: 0, blink_count: 0, face_detected: false },
+
+    eyeAspectRatio: function(pts, indices) {
+      if (!pts || indices.length < 6) return 0.3;
+      var p = []; for (var i = 0; i < indices.length; i++) p.push(pts[indices[i]]);
+      var A = Math.hypot(p[1].x-p[5].x, p[1].y-p[5].y);
+      var B = Math.hypot(p[2].x-p[4].x, p[2].y-p[4].y);
+      var C = Math.hypot(p[0].x-p[3].x, p[0].y-p[3].y);
+      return (A+B)/(2.0*C+1e-6);
+    },
+    headPose: function(pts) {
+      var nose=pts[POSE_LANDMARKS.nose_tip], chin=pts[POSE_LANDMARKS.chin], le=pts[POSE_LANDMARKS.left_eye_outer], re=pts[POSE_LANDMARKS.right_eye_outer];
+      var emx=(le.x+re.x)/2, edx=Math.abs(le.x-re.x), yaw=((nose.x-emx)/(edx+1e-6))*60;
+      var emy=(le.y+re.y)/2, fh=Math.abs(chin.y-emy), npy=(nose.y-emy)/(fh+1e-6), pitch=(npy-0.35)*80;
+      var roll=Math.atan2(re.y-le.y, re.x-le.x)*(180/Math.PI);
+      return {pitch:pitch,yaw:yaw,roll:roll};
+    },
+    irisCenter: function(pts, indices) {
+      var cx=0,cy=0; for(var i=0;i<indices.length;i++){cx+=pts[indices[i]].x;cy+=pts[indices[i]].y;} return{x:cx/indices.length,y:cy/indices.length};
+    },
+    gazeVector: function(pts, eyeIdx, ic) {
+      var ep=[]; for(var i=0;i<eyeIdx.length;i++) ep.push(pts[eyeIdx[i]]);
+      var xn=Infinity,xx=-Infinity,yn=Infinity,yx=-Infinity;
+      for(var i=0;i<ep.length;i++){var p=ep[i]; if(p.x<xn)xn=p.x; if(p.x>xx)xx=p.x; if(p.y<yn)yn=p.y; if(p.y>yx)yx=p.y;}
+      var cx=(xn+xx)/2,cy=(yn+yx)/2;
+      var nx=xx===xn?0:(ic.x-cx)/((xx-xn)/2), ny=yx===yn?0:(ic.y-cy)/((yx-yn)/2);
+      return{x:Math.max(-1.5,Math.min(1.5,nx)),y:Math.max(-1.5,Math.min(1.5,ny))};
+    },
+    attentionLabel: function(el,er,yaw,pitch,g) {
+      if(!(el>config.ear_thresh&&er>config.ear_thresh)) return '眼睛闭合';
+      if(!(Math.abs(yaw)<config.yaw_thresh_deg&&Math.abs(pitch)<config.pitch_thresh_deg)) return '视线偏离';
+      if(!(Math.abs(g.x)<config.gaze_off_center&&Math.abs(g.y)<config.gaze_off_center)) return '视线偏移';
+      return '专注';
+    },
+    analyzeFrame: function(landmarks) {
+      var pts=landmarks, label='未检测到面部', el=0,er=0, euler={pitch:0,yaw:0,roll:0}, gz={x:0,y:0};
+      if(pts&&pts.length>=478){
+        er=this.eyeAspectRatio(pts,R_EYE); el=this.eyeAspectRatio(pts,L_EYE);
+        if(el<config.ear_thresh&&er<config.ear_thresh){this.closed_counter++;}
+        else{if(this.closed_counter>=config.ear_consec_frames)this.blinks++;this.closed_counter=0;}
+        euler=this.headPose(pts);
+        var icr=this.irisCenter(pts,RIGHT_IRIS),icl=this.irisCenter(pts,LEFT_IRIS);
+        var gr=this.gazeVector(pts,R_EYE,icr),gl=this.gazeVector(pts,L_EYE,icl);
+        gz={x:(gr.x+gl.x)/2,y:(gr.y+gl.y)/2};
+        label=this.attentionLabel(el,er,euler.yaw,euler.pitch,gz);
+      }
+      this.current_state={attention_label:label,ear_left:el,ear_right:er,yaw:euler.yaw,pitch:euler.pitch,roll:euler.roll,gaze_x:gz.x,gaze_y:gz.y,blink_count:this.blinks,face_detected:pts&&pts.length>=478};
+      this.ear_history.push((el+er)/2); if(this.ear_history.length>300)this.ear_history.shift();
+      this.gaze_history.push(Math.hypot(gz.x,gz.y)); if(this.gaze_history.length>300)this.gaze_history.shift();
+      this.pose_history.push(Math.abs(euler.yaw)+Math.abs(euler.pitch)); if(this.pose_history.length>300)this.pose_history.shift();
+      return this.current_state;
+    },
+    reset: function(){this.closed_counter=0;this.blinks=0;this.ear_history.length=0;this.gaze_history.length=0;this.pose_history.length=0;}
+  };
+
+  // === OptimizedAttentionScoringSystem (ui.py 第 3387-3985 行) ===
+  var scoringSystem = {
+    params: {
+      ear_optimal:0.22, ear_good_threshold:0.20, ear_fair_threshold:0.18, ear_bad_threshold:0.16, ear_asymmetry_threshold:0.05,
+      gaze_optimal:0.15, gaze_good_threshold:0.25, gaze_fair_threshold:0.35, gaze_bad_threshold:0.50, gaze_speed_threshold:0.8,
+      head_optimal:8.0, head_good_threshold:15.0, head_fair_threshold:25.0, head_bad_threshold:35.0, head_speed_threshold:10.0,
+      blink_optimal_min:10, blink_optimal_max:30, blink_too_fast:40, blink_too_slow:5, blink_cluster_threshold:5,
+      short_focus_threshold:2.0, medium_focus_threshold:5.0, long_focus_threshold:10.0,
+      micro_movement_freq:3.0
+    },
+    gaze_history:[], head_pose_history:[], ear_history:[], attention_history:[], score_history:[], timestamps:[],
+    blink_timestamps:[], blink_clusters:[], current_blink_cluster:0,
+    motor_movements:[], micro_movement_count:0, last_head_position:null,
+    focus_start_time:null, current_focus_duration:0, longest_focus_duration:0, focus_interruptions:0,
+    adhd_features:{inattention_count:0,hyperactivity_count:0,impulsivity_events:[],total_events:0},
+    lastDetail:{eye:0,gaze:0,head:0,duration:0,blink:0,motor:0,emotion:0,adhd:0},
+
+    // 用于 ADHD 面板的详细信息
+    adhdDetail: { p1_triggered: false, p1_penalty: 0, p3_triggered: false, p3_transitions: 0, p3_penalty: 0 },
+
+    calcEyeScore: function(el,er,label){
+      if(label==='眼睛闭合')return 0; var avg=(el+er)/2,asym=Math.abs(el-er),s;
+      if(avg>=this.params.ear_optimal)s=20;else if(avg>=this.params.ear_good_threshold)s=16;else if(avg>=this.params.ear_fair_threshold)s=12;else if(avg>=this.params.ear_bad_threshold)s=6;else s=0;
+      if(asym>this.params.ear_asymmetry_threshold)s-=Math.min(5,asym*20);
+      if(this.ear_history.length>=30){var st=calcStd(this.ear_history.slice(-30));if(st<0.02)s+=3;else if(st<0.04)s+=2;}
+      return Math.max(0,s);
+    },
+    calcGazeScore: function(gx,gy,label){
+      if(label==='视线偏离'||label==='视线偏移')return 0; var m=Math.hypot(gx,gy),s;
+      if(m<=this.params.gaze_optimal)s=15;else if(m<=this.params.gaze_good_threshold)s=12;else if(m<=this.params.gaze_fair_threshold)s=9;else if(m<=this.params.gaze_bad_threshold)s=5;else s=0;
+      if(this.gaze_history.length>=2){var sp=Math.abs(m-this.gaze_history[this.gaze_history.length-2]);if(sp>this.params.gaze_speed_threshold)s-=Math.min(5,sp*3);}
+      if(this.gaze_history.length>=60){var st=calcStd(this.gaze_history.slice(-60));if(st<0.1)s+=3;else if(st<0.2)s+=2;}
+      return Math.max(0,s);
+    },
+    calcHeadScore: function(yaw,pitch,label){
+      if(label==='视线偏离')return 0; var off=Math.hypot(yaw,pitch),s;
+      if(off<=this.params.head_optimal)s=12;else if(off<=this.params.head_good_threshold)s=10;else if(off<=this.params.head_fair_threshold)s=8;else if(off<=this.params.head_bad_threshold)s=4;else s=0;
+      if(this.last_head_position){var mv=Math.hypot(yaw-this.last_head_position[0],pitch-this.last_head_position[1]);if(mv>this.params.head_speed_threshold)s-=Math.min(4,mv*2);}
+      if(this.head_pose_history.length>=60){var st=calcStd(this.head_pose_history.slice(-60));if(st<5.0)s+=2;else if(st<10.0)s+=1;}
+      return Math.max(0,s);
+    },
+    calcDurationScore: function(label,now){
+      if(this.focus_start_time===null)return 5; var dur=(now-this.focus_start_time)/1000;
+      if(dur>=this.params.long_focus_threshold)return 18;if(dur>=this.params.medium_focus_threshold)return 14;if(dur>=this.params.short_focus_threshold)return 9;return 4;
+    },
+    calcBlinkScore: function(el,er,now){
+      if(this.ear_history.length<30)return 5;
+      if(el<this.params.ear_bad_threshold&&er<this.params.ear_bad_threshold){this.blink_timestamps.push(now);this.current_blink_cluster++;}
+      else{if(this.current_blink_cluster>0&&this.blink_timestamps.length>0){if(now-this.blink_timestamps[this.blink_timestamps.length-1]>500){if(this.current_blink_cluster>=this.params.blink_cluster_threshold)this.blink_clusters.push(this.current_blink_cluster);this.current_blink_cluster=0;}}}
+      var rc=[]; for(var i=0;i<this.blink_timestamps.length;i++){if(now-this.blink_timestamps[i]<=10000)rc.push(this.blink_timestamps[i]);}
+      var rate=(rc.length/10)*60, s;
+      if(rate>=this.params.blink_optimal_min&&rate<=this.params.blink_optimal_max)s=8;else if(rate>this.params.blink_too_fast)s=3;else if(rate<this.params.blink_too_slow)s=4;else s=6;
+      if(this.blink_clusters.length>0&&this.blink_clusters[this.blink_clusters.length-1]>=3)s-=2;
+      return Math.max(0,s);
+    },
+    calcMotorScore: function(yaw,pitch,now){
+      if(!this.last_head_position){this.last_head_position=[yaw,pitch];return 5;}
+      var mv=Math.hypot(yaw-this.last_head_position[0],pitch-this.last_head_position[1]);
+      if(mv>0.5&&mv<5.0){this.micro_movement_count++;this.motor_movements.push({timestamp:now,movement:mv});}
+      var rm=[]; for(var i=0;i<this.motor_movements.length;i++){if(now-this.motor_movements[i].timestamp<=5000)rm.push(this.motor_movements[i]);}
+      var freq=rm.length/5.0, s=8;
+      if(freq>this.params.micro_movement_freq){s-=4;this.adhd_features.hyperactivity_count++;}else if(freq>this.params.micro_movement_freq/2)s-=2;
+      this.last_head_position=[yaw,pitch];return Math.max(0,s);
+    },
+    calcEmotionAdjustment: function(){return 0;},
+
+    detectAdhdFeatures: function(state,now){
+      var adj=0, label=state.attention_label;
+      this.adhdDetail.p1_triggered=false; this.adhdDetail.p1_penalty=0;
+      this.adhdDetail.p3_triggered=false; this.adhdDetail.p3_transitions=0; this.adhdDetail.p3_penalty=0;
+
+      if(label!=='专注'&&label!=='初始化中'&&label!=='未检测到面部'){
+        this.adhd_features.inattention_count++;
+        if(this.attention_history.length>=3){
+          var r3=this.attention_history.slice(-3),allD=true,dc=0;
+          for(var i=0;i<r3.length;i++){if(r3[i]!=='专注')dc++;else allD=false;}
+          if(allD){adj-=5;this.adhdDetail.p1_triggered=true;this.adhdDetail.p1_penalty=-5;}
+          else if(dc>=2){adj-=3;this.adhdDetail.p1_triggered=true;this.adhdDetail.p1_penalty=-3;}
+        }
+      }
+      if(this.attention_history.length>=20){
+        var pat=this.attention_history.slice(-20),tr=0;
+        for(var i=1;i<pat.length;i++){if(pat[i]==='专注'&&pat[i-1]!=='专注')tr++;}
+        this.adhdDetail.p3_transitions=tr;
+        if(tr>=5){adj-=3;this.adhdDetail.p3_triggered=true;this.adhdDetail.p3_penalty=-3;this.adhd_features.total_events++;}
+      }
+      return adj;
+    },
+
+    nonlinearScale: function(s){if(s>=80)return 80+(s-80)*0.8;if(s>=60)return s;if(s>=40)return 40+(s-40)*1.2;return s*1.5;},
+
+    updateFocusState: function(label,score,now){
+      if(label==='专注'&&score>=65){if(this.focus_start_time===null){this.focus_start_time=now;this.current_focus_duration=0;}this.current_focus_duration=(now-this.focus_start_time)/1000;if(this.current_focus_duration>this.longest_focus_duration)this.longest_focus_duration=this.current_focus_duration;}
+      else{if(this.focus_start_time!==null){this.focus_interruptions++;this.focus_start_time=null;this.current_focus_duration=0;}}
+    },
+
+    // 主入口 — 额外保存中间步骤供 UI 展示
+    _lastCalcSteps: { base:0, preScale:0, postScale:0, final:0 },
+
+    calculate: function(state){
+      var now=performance.now(); this.timestamps.push(now);
+      var eye=this.calcEyeScore(state.ear_left,state.ear_right,state.attention_label);
+      var gaze=this.calcGazeScore(state.gaze_x,state.gaze_y,state.attention_label);
+      var head=this.calcHeadScore(state.yaw,state.pitch,state.attention_label);
+      var duration=this.calcDurationScore(state.attention_label,now);
+      var blink=this.calcBlinkScore(state.ear_left,state.ear_right,now);
+      var motor=this.calcMotorScore(state.yaw,state.pitch,now);
+
+      var base=eye+gaze+head+duration+blink+motor;
+      if(!state.face_detected) base=Math.max(0,base*0.6);
+      var emo=this.calcEmotionAdjustment();
+      var adhd=this.detectAdhdFeatures(state,now);
+      var preScale=base+emo+adhd;
+      var postScale=this.nonlinearScale(preScale);
+      var final_=Math.max(0,Math.min(100,postScale));
+
+      this.updateFocusState(state.attention_label,final_,now);
+
+      this.attention_history.push(state.attention_label); if(this.attention_history.length>600)this.attention_history.shift();
+      this.gaze_history.push(Math.hypot(state.gaze_x,state.gaze_y)); if(this.gaze_history.length>300)this.gaze_history.shift();
+      this.head_pose_history.push(Math.abs(state.yaw)+Math.abs(state.pitch)); if(this.head_pose_history.length>300)this.head_pose_history.shift();
+      this.ear_history.push((state.ear_left+state.ear_right)/2); if(this.ear_history.length>300)this.ear_history.shift();
+      this.score_history.push(final_); if(this.score_history.length>600)this.score_history.shift();
+
+      this.lastDetail={eye:eye,gaze:gaze,head:head,duration:duration,blink:blink,motor:motor,emotion:emo,adhd:adhd};
+      this._lastCalcSteps={base:base,preScale:preScale,postScale:postScale,final:Math.round(final_)};
+      return Math.round(final_);
+    },
+
+    reset: function(){
+      this.gaze_history.length=0;this.head_pose_history.length=0;this.ear_history.length=0;this.attention_history.length=0;this.score_history.length=0;this.timestamps.length=0;
+      this.blink_timestamps.length=0;this.blink_clusters.length=0;this.motor_movements.length=0;
+      this.current_blink_cluster=0;this.micro_movement_count=0;this.last_head_position=null;
+      this.focus_start_time=null;this.current_focus_duration=0;this.longest_focus_duration=0;this.focus_interruptions=0;
+      this.adhd_features={inattention_count:0,hyperactivity_count:0,impulsivity_events:[],total_events:0};
+    }
+  };
+
+  // === VoiceReminderSystem (ui.py 第 674-800 行) ===
+  var voiceReminder = {
+    lastReminderTime:0, cooldown:15000, isSpeaking:false, reminderCount:0,
+    messages:['请注意集中注意力哦','看看屏幕，继续学习吧','小朋友，要认真听课哦','注意力回来，加油！','眼睛看这里，继续努力'],
+    check:function(score,label){
+      if(!sdk.voiceEnabled||this.isSpeaking)return;var now=performance.now();if(now-this.lastReminderTime<this.cooldown)return;
+      if(score<40&&label!=='专注'&&label!=='未检测到面部'&&label!=='初始化中'){this.speak();this.lastReminderTime=now;this.reminderCount++;}
+    },
+    speak:function(){
+      if(!('speechSynthesis' in window))return;
+      var text=this.messages[Math.floor(Math.random()*this.messages.length)];
+      var msg=new SpeechSynthesisUtterance(text);msg.lang='zh-CN';msg.rate=0.9;msg.pitch=1.1;this.isSpeaking=true;
+      var ind=document.getElementById('voiceIndicator');ind.textContent=text;ind.classList.add('show');
+      var self=this;msg.onend=function(){self.isSpeaking=false;ind.classList.remove('show');};
+      speechSynthesis.speak(msg);
+      sdk._emit('voiceReminder',{text:text,timestamp:new Date().toISOString()});
+    },
+    reset:function(){this.lastReminderTime=0;this.reminderCount=0;if('speechSynthesis' in window)speechSynthesis.cancel();}
+  };
+
+  // === 辅助函数 ===
+  function calcStd(arr){if(arr.length===0)return 0;var s=0;for(var i=0;i<arr.length;i++)s+=arr[i];var m=s/arr.length;var sq=0;for(var i=0;i<arr.length;i++)sq+=(arr[i]-m)*(arr[i]-m);return Math.sqrt(sq/arr.length);}
+  function getScoreColor(s){if(s>=70)return'#36d399';if(s>=40)return'#f59e0b';return'#ff4a4a';}
+  function formatDuration(s){var h=Math.floor(s/3600),m=Math.floor((s%3600)/60),ss=Math.floor(s%60);return(h<10?'0':'')+h+':'+(m<10?'0':'')+m+':'+(ss<10?'0':'')+ss;}
+
+  // === UI 更新 ===
+  var scoreHistory=[], totalFrames=0, focusedFrames=0;
+  var lastFpsTime=0, fpsCounter=0, currentFps=0;
+  var sessionTimeline=[], lastTimelineSample=0;
+
+  function updateUI(state, score) {
+    var d = scoringSystem.lastDetail;
+    var steps = scoringSystem._lastCalcSteps;
+
+    // --- 分数圆 ---
+    var color=getScoreColor(score);
+    document.getElementById('scoreCircle').style.borderColor=color;
+    document.getElementById('scoreNumber').textContent=score;
+    document.getElementById('scoreNumber').style.color=color;
+
+    // --- 注意力标签 ---
+    var tag=document.getElementById('attentionTag');
+    tag.textContent=state.attention_label;
+    tag.style.color=state.attention_label==='专注'?'#36d399':'#ff6a6a';
+
+    // --- ② 计算步骤 ---
+    document.getElementById('cs-base-expr').textContent = '= '+d.eye+'+'+d.gaze+'+'+d.head+'+'+d.duration+'+'+d.blink+'+'+d.motor;
+    document.getElementById('cs-base').textContent = '= '+Math.round(steps.base);
+    document.getElementById('cs-emo').textContent = d.emotion>=0?'+'+d.emotion.toFixed(1):d.emotion.toFixed(1);
+    document.getElementById('cs-adhd-expr').textContent = d.adhd<0?'检测到异常行为模式':'DSM-5 行为模式正常';
+    document.getElementById('cs-adhd').textContent = d.adhd>=0?'+'+d.adhd:''+d.adhd;
+    document.getElementById('cs-adhd').style.color = d.adhd<0?'#ff6a6a':'#8899aa';
+    document.getElementById('cs-scale-expr').textContent = 'nonlinear('+Math.round(steps.preScale)+')';
+    document.getElementById('cs-scale').textContent = '= '+Math.round(steps.postScale);
+    document.getElementById('cs-final').textContent = steps.final;
+    document.getElementById('cs-final').style.color = getScoreColor(steps.final);
+
+    // --- ③ 六维评分 ---
+    updateDim('eye', d.eye, 25, state);
+    updateDim('gaze', d.gaze, 20, state);
+    updateDim('head', d.head, 15, state);
+    updateDim('duration', d.duration, 20, state);
+    updateDim('blink', d.blink, 10, state);
+    updateDim('motor', d.motor, 10, state);
+
+    // 动态说明文字
+    var earAvg=(state.ear_left+state.ear_right)/2;
+    document.getElementById('exp-eye').textContent = 'EAR='+earAvg.toFixed(3)+(earAvg>=0.22?' (优秀)':earAvg>=0.20?' (良好)':earAvg>=0.18?' (一般)':' (偏低)');
+    var gazeMag=Math.hypot(state.gaze_x,state.gaze_y);
+    document.getElementById('exp-gaze').textContent = '偏移量='+gazeMag.toFixed(3)+(gazeMag<=0.15?' (优秀)':gazeMag<=0.25?' (良好)':gazeMag<=0.35?' (一般)':' (偏离)');
+    var headOff=Math.hypot(state.yaw,state.pitch);
+    document.getElementById('exp-head').textContent = '偏移='+headOff.toFixed(1)+'°'+(headOff<=8?' (优秀)':headOff<=15?' (良好)':headOff<=25?' (一般)':' (偏离)');
+    document.getElementById('exp-duration').textContent = '已持续 '+scoringSystem.current_focus_duration.toFixed(1)+'s'+(scoringSystem.current_focus_duration>=10?' (优秀)':scoringSystem.current_focus_duration>=5?' (良好)':scoringSystem.current_focus_duration>=2?' (一般)':' (刚开始)');
+
+    // --- ④ 阈值对照 ---
+    setThreshold('th-ear-l', state.ear_left.toFixed(3), 'dot-ear-l', state.ear_left>config.ear_thresh);
+    setThreshold('th-ear-r', state.ear_right.toFixed(3), 'dot-ear-r', state.ear_right>config.ear_thresh);
+    setThreshold('th-yaw', Math.abs(state.yaw).toFixed(1)+'°', 'dot-yaw', Math.abs(state.yaw)<config.yaw_thresh_deg);
+    setThreshold('th-pitch', Math.abs(state.pitch).toFixed(1)+'°', 'dot-pitch', Math.abs(state.pitch)<config.pitch_thresh_deg);
+    setThreshold('th-gaze-x', Math.abs(state.gaze_x).toFixed(3), 'dot-gaze-x', Math.abs(state.gaze_x)<config.gaze_off_center);
+    setThreshold('th-gaze-y', Math.abs(state.gaze_y).toFixed(3), 'dot-gaze-y', Math.abs(state.gaze_y)<config.gaze_off_center);
+
+    // --- ⑤ ADHD 面板 ---
+    var ad=scoringSystem.adhdDetail;
+    var p1=document.getElementById('adhd-p1');
+    p1.className='adhd-pattern'+(ad.p1_triggered?' triggered':'');
+    document.getElementById('adhd-p1-val').textContent=ad.p1_triggered?ad.p1_penalty:'0';
+
+    var p3=document.getElementById('adhd-p3');
+    p3.className='adhd-pattern'+(ad.p3_triggered?' triggered':'');
+    document.getElementById('adhd-p3-val').textContent=ad.p3_triggered?ad.p3_penalty:'0 ('+ad.p3_transitions+'/5)';
+
+    // --- ADHD 浮层 ---
+    var adhdOv=document.getElementById('adhdAlertOverlay');
+    if(d.adhd<-3){adhdOv.textContent=d.adhd<=-5?'ADHD: 连续分心':'ADHD: 注意力频繁转移';adhdOv.classList.add('show');}
+    else adhdOv.classList.remove('show');
+
+    // --- ⑥ 感知层 ---
+    document.getElementById('m-blinks').textContent=state.blink_count;
+    document.getElementById('m-focus-dur').textContent=scoringSystem.current_focus_duration.toFixed(1)+'s';
+    document.getElementById('m-micro').textContent=scoringSystem.micro_movement_count;
+
+    // --- ⑦ 统计 ---
+    totalFrames++;
+    if(score>=70)focusedFrames++;
+    updateStatsUI();
+
+    if(sdk.sessionStartTime){document.getElementById('sessionTag').textContent=formatDuration((Date.now()-sdk.sessionStartTime)/1000);}
+
+    scoreHistory.push(score); if(scoreHistory.length>200)scoreHistory.shift();
+    drawHistoryChart();
+
+    var now=Date.now();
+    if(now-lastTimelineSample>=1000){
+      sessionTimeline.push({t:now,score:score,label:state.attention_label,detail:{eye:d.eye,gaze:d.gaze,head:d.head,duration:d.duration,blink:d.blink,motor:d.motor,adhd:d.adhd}});
+      lastTimelineSample=now;
+    }
+    sdk._emit('scoreUpdate',{score:score,label:state.attention_label,detail:d,timestamp:new Date().toISOString()});
+  }
+
+  function updateDim(id,val,max,state){
+    document.getElementById('bar-'+id).style.width=(val/max*100)+'%';
+    document.getElementById('val-'+id).textContent=Math.round(val)+'/'+max;
+    document.getElementById('val-'+id).style.color=val>=max*0.7?'#36d399':val>=max*0.4?'#f59e0b':'#ff6a6a';
+  }
+
+  function setThreshold(valId,text,dotId,pass){
+    document.getElementById(valId).textContent=text;
+    document.getElementById(valId).style.color=pass?'#36d399':'#ff6a6a';
+    var dot=document.getElementById(dotId);
+    dot.className='threshold-dot '+(pass?'dot-pass':'dot-fail');
+  }
+
+  function updateStatsUI(){
+    if(scoreHistory.length>0){var s=0;for(var i=0;i<scoreHistory.length;i++)s+=scoreHistory[i];document.getElementById('m-avg').textContent=(s/scoreHistory.length).toFixed(1);}
+    document.getElementById('m-focus-pct').textContent=totalFrames>0?(focusedFrames/totalFrames*100).toFixed(1)+'%':'--';
+    document.getElementById('m-longest').textContent=scoringSystem.longest_focus_duration.toFixed(1)+'s';
+    document.getElementById('m-interrupts').textContent=scoringSystem.focus_interruptions;
+    document.getElementById('m-adhd-events').textContent=scoringSystem.adhd_features.total_events;
+    document.getElementById('m-voice-count').textContent=voiceReminder.reminderCount;
+  }
+
+  function drawHistoryChart(){
+    var canvas=document.getElementById('historyChart'),c=canvas.getContext('2d');
+    var w=canvas.width=canvas.clientWidth*2,h=canvas.height=canvas.clientHeight*2;
+    c.clearRect(0,0,w,h); if(scoreHistory.length<2)return;
+    var y70=h-(70/100)*h;
+    c.strokeStyle='rgba(255,180,0,0.3)';c.lineWidth=1;c.setLineDash([6,4]);c.beginPath();c.moveTo(0,y70);c.lineTo(w,y70);c.stroke();c.setLineDash([]);
+    c.beginPath();var step=w/(scoreHistory.length-1);
+    for(var i=0;i<scoreHistory.length;i++){var x=i*step,y=h-(scoreHistory[i]/100)*h;if(i===0)c.moveTo(x,y);else c.lineTo(x,y);}
+    c.strokeStyle='#4a9eff';c.lineWidth=2;c.stroke();
+    var grad=c.createLinearGradient(0,0,0,h);grad.addColorStop(0,'rgba(74,158,255,0.3)');grad.addColorStop(1,'rgba(74,158,255,0)');
+    c.lineTo(w,h);c.lineTo(0,h);c.closePath();c.fillStyle=grad;c.fill();
+  }
+
+  // === MediaPipe FaceMesh ===
+  var faceMesh=null, camera=null, canvasCtx=null;
+
+  function initFaceMesh(){
+    canvasCtx=document.getElementById('overlay').getContext('2d');
+    faceMesh=new FaceMesh({locateFile:function(f){return'https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/'+f;}});
+    faceMesh.setOptions({maxNumFaces:1,refineLandmarks:true,minDetectionConfidence:0.5,minTrackingConfidence:0.5});
+    faceMesh.onResults(function(results){
+      var ce=document.getElementById('overlay');
+      canvasCtx.clearRect(0,0,ce.width,ce.height);
+      if(results.multiFaceLandmarks&&results.multiFaceLandmarks.length>0){
+        var lm=results.multiFaceLandmarks[0];
+        if(sdk.showLandmarks){
+          canvasCtx.save();canvasCtx.translate(ce.width,0);canvasCtx.scale(-1,1);
+          drawConnectors(canvasCtx,lm,FACEMESH_TESSELATION,{color:'#30a0ff20',lineWidth:0.5});
+          drawConnectors(canvasCtx,lm,FACEMESH_RIGHT_EYE,{color:'#36d399',lineWidth:1});
+          drawConnectors(canvasCtx,lm,FACEMESH_LEFT_EYE,{color:'#36d399',lineWidth:1});
+          drawConnectors(canvasCtx,lm,FACEMESH_RIGHT_IRIS,{color:'#ff6a6a',lineWidth:1});
+          drawConnectors(canvasCtx,lm,FACEMESH_LEFT_IRIS,{color:'#ff6a6a',lineWidth:1});
+          canvasCtx.restore();
+        }
+        var st=attentionAnalyzer.analyzeFrame(lm);var sc=scoringSystem.calculate(st);voiceReminder.check(sc,st.attention_label);updateUI(st,sc);
+      }else{var st=attentionAnalyzer.analyzeFrame(null);var sc=scoringSystem.calculate(st);updateUI(st,sc);}
+      fpsCounter++;var now=performance.now();if(now-lastFpsTime>=1000){currentFps=fpsCounter;fpsCounter=0;lastFpsTime=now;document.getElementById('fpsTag').textContent=currentFps+' FPS';}
+    });
+    return faceMesh;
+  }
+
+  async function startCamera(){
+    var videoEl=document.getElementById('webcam'),canvasEl=document.getElementById('overlay');
+    var btn=document.getElementById('btnStart'),lb=document.getElementById('loadingBar'),lf=document.getElementById('loadingBarFill');
+    btn.textContent='加载模型中...';btn.disabled=true;lb.classList.add('active');lf.style.width='30%';
+    try{
+      initFaceMesh();lf.style.width='60%';
+      await faceMesh.initialize();lf.style.width='80%';
+      camera=new Camera(videoEl,{onFrame:async function(){await faceMesh.send({image:videoEl});},width:640,height:480});
+      await camera.start();lf.style.width='100%';
+      sdk.running=true;sdk.sessionStartTime=Date.now();
+      canvasEl.width=videoEl.videoWidth||640;canvasEl.height=videoEl.videoHeight||480;
+      document.getElementById('startScreen').classList.add('hidden');
+      document.getElementById('scoreOverlay').style.display='block';
+      document.getElementById('statusOverlay').style.display='flex';
+      sdk._emit('sessionStart',{timestamp:new Date().toISOString(),config:config});
+      console.log('[AttentionMonitor] v2.1 启动成功');
+    }catch(err){
+      btn.textContent='启动摄像头';btn.disabled=false;lb.classList.remove('active');
+      alert('无法启动: '+err.message+'\n\n请确保:\n1. 允许摄像头权限\n2. 使用 HTTPS 或 localhost\n3. 网络可访问 CDN');
+      console.error('[AttentionMonitor]',err);
+    }
+  }
+
+  // === 报告导出 ===
+  function generateReport(){
+    var dur=sdk.sessionStartTime?(Date.now()-sdk.sessionStartTime)/1000:0;
+    var avg=0;if(scoreHistory.length>0){var s=0;for(var i=0;i<scoreHistory.length;i++)s+=scoreHistory[i];avg=s/scoreHistory.length;}
+    return{meta:{version:sdk.version,exportTime:new Date().toISOString(),sessionStart:sdk.sessionStartTime?new Date(sdk.sessionStartTime).toISOString():null,sessionDurationSec:Math.round(dur)},
+      summary:{averageScore:Math.round(avg*10)/10,focusRate:totalFrames>0?Math.round(focusedFrames/totalFrames*1000)/10:0,longestFocusSec:Math.round(scoringSystem.longest_focus_duration*10)/10,totalInterruptions:scoringSystem.focus_interruptions,totalBlinks:attentionAnalyzer.blinks,adhdEvents:scoringSystem.adhd_features.total_events,inattentionCount:scoringSystem.adhd_features.inattention_count,hyperactivityCount:scoringSystem.adhd_features.hyperactivity_count,voiceReminders:voiceReminder.reminderCount},
+      config:config,timeline:sessionTimeline};
+  }
+
+  // === 公共 API ===
+  sdk.toggleVoice=function(){sdk.voiceEnabled=!sdk.voiceEnabled;document.getElementById('btnVoice').classList.toggle('active',sdk.voiceEnabled);};
+  sdk.toggleLandmarks=function(){sdk.showLandmarks=!sdk.showLandmarks;document.getElementById('btnLandmarks').classList.toggle('active',sdk.showLandmarks);};
+  sdk.resetStats=function(){scoringSystem.reset();attentionAnalyzer.reset();voiceReminder.reset();scoreHistory.length=0;sessionTimeline.length=0;totalFrames=0;focusedFrames=0;updateStatsUI();};
+  sdk.exportReport=function(){var j=JSON.stringify(generateReport(),null,2);var b=new Blob([j],{type:'application/json'});var u=URL.createObjectURL(b);var a=document.createElement('a');a.href=u;a.download='attention-report-'+new Date().toISOString().slice(0,19).replace(/:/g,'-')+'.json';a.click();URL.revokeObjectURL(u);};
+  sdk.getReport=generateReport;
+  sdk.getConfig=function(){return config;};
+  sdk.setConfig=function(nc){for(var k in nc){if(config.hasOwnProperty(k))config[k]=nc[k];}};
+  sdk.getCurrentScore=function(){return scoringSystem.score_history.length?scoringSystem.score_history[scoringSystem.score_history.length-1]:null;};
+  sdk.getCurrentState=function(){return attentionAnalyzer.current_state;};
+
+  document.addEventListener('DOMContentLoaded',function(){document.getElementById('btnStart').addEventListener('click',startCamera);});
+  return sdk;
+})();
+</script>
+</body>
+</html>
