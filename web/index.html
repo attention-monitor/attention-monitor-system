@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ADHD 注意力监测系统 v2.1</title>
+<title>ADHD 注意力监测系统 v2.2</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f1923; color: #e0e0e0; overflow: hidden; height: 100vh; }
@@ -128,6 +128,27 @@ canvas#overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%;
 .loading-bar.active { display: block; }
 .loading-bar-fill { width: 0%; height: 100%; background: #4a9eff; border-radius: 2px; transition: width 0.3s; }
 
+/* Calibration overlay */
+.calibration-overlay { position: absolute; inset: 0; z-index: 18; display: none; }
+.calibration-overlay.active { display: flex; flex-direction: column; align-items: center; justify-content: center; }
+.calib-bg { position: absolute; inset: 0; background: rgba(15,25,35,0.6); }
+.calib-dot { position: absolute; width: 20px; height: 20px; border-radius: 50%; background: #ff4a4a; box-shadow: 0 0 20px #ff4a4a88, 0 0 60px #ff4a4a44; transform: translate(-50%,-50%); animation: calib-pulse 1s ease-in-out infinite; z-index: 2; }
+@keyframes calib-pulse { 0%,100%{transform:translate(-50%,-50%) scale(1);} 50%{transform:translate(-50%,-50%) scale(1.3);} }
+.calib-ring { position: absolute; width: 48px; height: 48px; transform: translate(-50%,-50%); z-index: 1; }
+.calib-ring circle { fill: none; stroke-width: 3; }
+.calib-ring .ring-bg { stroke: #2a3a4a; }
+.calib-ring .ring-fill { stroke: #4a9eff; stroke-linecap: round; transform: rotate(-90deg); transform-origin: center; transition: stroke-dashoffset 0.1s; }
+.calib-info { position: absolute; bottom: 40px; left: 50%; transform: translateX(-50%); z-index: 3; text-align: center; }
+.calib-step-text { font-size: 16px; color: #fff; font-weight: 600; margin-bottom: 6px; }
+.calib-progress-text { font-size: 12px; color: #8899aa; }
+.calib-skip { margin-top: 12px; padding: 4px 16px; font-size: 11px; border: 1px solid #3a4a5a; border-radius: 16px; background: transparent; color: #8899aa; cursor: pointer; }
+.calib-skip:hover { background: #2a3a4a; color: #c0d0e0; }
+
+/* Baseline indicator */
+.baseline-badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 10px; font-weight: 600; }
+.baseline-badge.calibrated { background: #36d39922; color: #36d399; }
+.baseline-badge.default { background: #f59e0b22; color: #f59e0b; }
+
 /* Responsive */
 @media (max-width: 900px) {
   .container { grid-template-columns: 1fr; grid-template-rows: 45vh 1fr; }
@@ -164,6 +185,21 @@ canvas#overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%;
 
     <div class="voice-indicator" id="voiceIndicator">正在提醒...</div>
     <div class="adhd-alert-overlay" id="adhdAlertOverlay"></div>
+
+    <!-- 校准覆盖层 -->
+    <div class="calibration-overlay" id="calibOverlay">
+      <div class="calib-bg"></div>
+      <div class="calib-dot" id="calibDot"></div>
+      <svg class="calib-ring" id="calibRing" viewBox="0 0 48 48">
+        <circle class="ring-bg" cx="24" cy="24" r="21"/>
+        <circle class="ring-fill" id="calibRingFill" cx="24" cy="24" r="21" stroke-dasharray="132" stroke-dashoffset="132"/>
+      </svg>
+      <div class="calib-info">
+        <div class="calib-step-text" id="calibStepText">请注视红点</div>
+        <div class="calib-progress-text" id="calibProgressText">准备中...</div>
+        <button class="calib-skip" onclick="AttentionMonitor.skipCalibration()">跳过校准</button>
+      </div>
+    </div>
   </div>
 
   <!-- ================================================================ -->
@@ -402,7 +438,20 @@ canvas#overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%;
       <canvas class="chart-canvas" id="historyChart"></canvas>
     </div>
 
-    <!-- ⑧ 控制 -->
+    <!-- ⑧ 个性化基线 (CalibrationSystem + FacialModeling + EMA) -->
+    <div class="section">
+      <div class="section-title"><span class="icon">⊕</span> 个性化基线 <span class="baseline-badge default" id="calibBadge">未校准</span></div>
+      <div class="metric"><span class="metric-label">EAR 基线</span><span class="metric-value" id="m-bl-ear">0.250 (默认)</span></div>
+      <div class="metric"><span class="metric-label">视线中心</span><span class="metric-value" id="m-bl-gaze">(0.00, 0.00)</span></div>
+      <div class="metric"><span class="metric-label">视线容差</span><span class="metric-value" id="m-bl-tol">0.35 (默认)</span></div>
+      <div class="metric"><span class="metric-label">头部基线</span><span class="metric-value" id="m-bl-head">(0.0°, 0.0°)</span></div>
+      <div class="metric"><span class="metric-label">EMA 漂移</span><span class="metric-value" id="m-bl-ema">α=0.01</span></div>
+      <div style="margin-top:6px;">
+        <button class="btn-ctrl" id="btnRecalib" onclick="AttentionMonitor.recalibrate()" style="font-size:10px;">重新校准</button>
+      </div>
+    </div>
+
+    <!-- ⑨ 控制 -->
     <div class="section">
       <div class="section-title"><span class="icon">⊞</span> 控制</div>
       <div class="controls">
@@ -422,13 +471,13 @@ canvas#overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%;
 
 <script>
 // ============================================================================
-// AttentionMonitor SDK v2.1
+// AttentionMonitor SDK v2.2 — with CalibrationSystem + FacialModeling + EMA
 // ============================================================================
 var AttentionMonitor = (function() {
   'use strict';
 
   var sdk = {
-    version: '2.1.0',
+    version: '2.2.0',
     running: false,
     sessionStartTime: null,
     showLandmarks: false,
@@ -496,6 +545,11 @@ var AttentionMonitor = (function() {
         var icr=this.irisCenter(pts,RIGHT_IRIS),icl=this.irisCenter(pts,LEFT_IRIS);
         var gr=this.gazeVector(pts,R_EYE,icr),gl=this.gazeVector(pts,L_EYE,icl);
         gz={x:(gr.x+gl.x)/2,y:(gr.y+gl.y)/2};
+        // 校准后：用个人视线中心偏移原始数据
+        if(calibrationSystem.isCalibrated()){
+          gz.x -= calibrationSystem.reference_gaze_center[0];
+          gz.y -= calibrationSystem.reference_gaze_center[1];
+        }
         label=this.attentionLabel(el,er,euler.yaw,euler.pitch,gz);
       }
       this.current_state={attention_label:label,ear_left:el,ear_right:er,yaw:euler.yaw,pitch:euler.pitch,roll:euler.roll,gaze_x:gz.x,gaze_y:gz.y,blink_count:this.blinks,face_detected:pts&&pts.length>=478};
@@ -573,6 +627,19 @@ var AttentionMonitor = (function() {
     },
     calcEmotionAdjustment: function(){return 0;},
 
+    // === EMA 自适应基线 (ui.py update_adaptive_params) ===
+    user_ear_baseline: 0.25,
+    user_gaze_stability: 0.0,
+    user_head_stability: 0.0,
+    updateAdaptiveParams: function(state) {
+      if (!state.face_detected) return;
+      var alpha = 0.01;
+      var ear_avg = (state.ear_left + state.ear_right) / 2;
+      this.user_ear_baseline = (1 - alpha) * this.user_ear_baseline + alpha * ear_avg;
+      this.user_gaze_stability = (1 - alpha) * this.user_gaze_stability + alpha * Math.hypot(state.gaze_x, state.gaze_y);
+      this.user_head_stability = (1 - alpha) * this.user_head_stability + alpha * (Math.abs(state.yaw) + Math.abs(state.pitch));
+    },
+
     detectAdhdFeatures: function(state,now){
       var adj=0, label=state.attention_label;
       this.adhdDetail.p1_triggered=false; this.adhdDetail.p1_penalty=0;
@@ -633,6 +700,7 @@ var AttentionMonitor = (function() {
 
       this.lastDetail={eye:eye,gaze:gaze,head:head,duration:duration,blink:blink,motor:motor,emotion:emo,adhd:adhd};
       this._lastCalcSteps={base:base,preScale:preScale,postScale:postScale,final:Math.round(final_)};
+      this.updateAdaptiveParams(state);
       return Math.round(final_);
     },
 
@@ -642,6 +710,156 @@ var AttentionMonitor = (function() {
       this.current_blink_cluster=0;this.micro_movement_count=0;this.last_head_position=null;
       this.focus_start_time=null;this.current_focus_duration=0;this.longest_focus_duration=0;this.focus_interruptions=0;
       this.adhd_features={inattention_count:0,hyperactivity_count:0,impulsivity_events:[],total_events:0};
+    }
+  };
+
+  // === CalibrationSystem (ui.py 第 4346-4578 行) ===
+  var calibrationSystem = {
+    active: false,
+    step: 0,
+    stepNames: ['中心','左上','右上','左下','右下'],
+    positions: [{x:50,y:50},{x:15,y:15},{x:85,y:15},{x:15,y:85},{x:85,y:85}],
+    framesNeeded: 60,
+    framesCollected: 0,
+    gazeData: [],
+    results: {},
+    reference_gaze_center: [0, 0],
+    gaze_tolerance: 0.35,
+
+    start: function() {
+      this.active = true; this.step = 0; this.framesCollected = 0;
+      this.gazeData = []; this.results = {};
+      var ov = document.getElementById('calibOverlay');
+      ov.classList.add('active');
+      this.updateDotPosition();
+      this.updateUI();
+    },
+
+    updateDotPosition: function() {
+      var pos = this.positions[this.step];
+      var dot = document.getElementById('calibDot');
+      var ring = document.getElementById('calibRing');
+      dot.style.left = pos.x + '%'; dot.style.top = pos.y + '%';
+      ring.style.left = pos.x + '%'; ring.style.top = pos.y + '%';
+    },
+
+    updateUI: function() {
+      var names = ['请注视 屏幕中央','请注视 左上角','请注视 右上角','请注视 左下角','请注视 右下角'];
+      document.getElementById('calibStepText').textContent = names[this.step] + ' (' + (this.step+1) + '/5)';
+      document.getElementById('calibProgressText').textContent = this.framesCollected + ' / ' + this.framesNeeded;
+      var pct = this.framesCollected / this.framesNeeded;
+      var offset = 132 * (1 - pct);
+      document.getElementById('calibRingFill').setAttribute('stroke-dashoffset', offset);
+    },
+
+    collectFrame: function(gx, gy) {
+      if (!this.active) return false;
+      this.gazeData.push({x: gx, y: gy});
+      this.framesCollected++;
+      this.updateUI();
+
+      if (this.framesCollected >= this.framesNeeded) {
+        this.completeStep();
+        this.step++;
+        if (this.step >= 5) {
+          this.finalize();
+          return true; // calibration done
+        }
+        this.framesCollected = 0; this.gazeData = [];
+        this.updateDotPosition(); this.updateUI();
+      }
+      return false;
+    },
+
+    completeStep: function() {
+      // 取最后 30 帧（最稳定的部分）
+      var data = this.gazeData.slice(-30);
+      var sx = 0, sy = 0;
+      for (var i = 0; i < data.length; i++) { sx += data[i].x; sy += data[i].y; }
+      var avgX = sx / data.length, avgY = sy / data.length;
+      var sqx = 0, sqy = 0;
+      for (var i = 0; i < data.length; i++) { sqx += (data[i].x - avgX) * (data[i].x - avgX); sqy += (data[i].y - avgY) * (data[i].y - avgY); }
+      var stdX = Math.sqrt(sqx / data.length), stdY = Math.sqrt(sqy / data.length);
+      this.results[this.stepNames[this.step]] = { avg: [avgX, avgY], std: [stdX, stdY], samples: data.length };
+    },
+
+    finalize: function() {
+      this.active = false;
+      document.getElementById('calibOverlay').classList.remove('active');
+      // 用中心校准结果作为参考点
+      var center = this.results['中心'];
+      if (center) {
+        this.reference_gaze_center = center.avg;
+        this.gaze_tolerance = Math.max(0.15, 2 * Math.max(center.std[0], center.std[1]));
+      }
+      // 不替换 gaze_off_center，保持 0.35 作为判断阈值
+      // 校准的作用是通过 reference_gaze_center 偏移原始数据，而非收紧容差
+      // gaze_tolerance 仅记录用于侧栏显示个人稳定性
+      console.log('[Calibration] 完成. 视线中心:', this.reference_gaze_center, '容差:', this.gaze_tolerance, '(gaze_off_center 保持 0.35)');
+    },
+
+    skip: function() {
+      this.active = false;
+      document.getElementById('calibOverlay').classList.remove('active');
+      console.log('[Calibration] 已跳过，使用默认阈值');
+    },
+
+    isCalibrated: function() { return Object.keys(this.results).length >= 5; }
+  };
+
+  // === FacialModeling (ui.py 第 3184-3376 行) ===
+  var facialModel = {
+    calibrated: false,
+    baseline_ear: 0.25,
+    baseline_gaze: 0.0,
+    baseline_head: { yaw: 0, pitch: 0 },
+    frames: [],
+    default_ear: 0.25,
+
+    recordFrame: function(state) {
+      if (!state.face_detected) return;
+      this.frames.push({
+        ear: (state.ear_left + state.ear_right) / 2,
+        gaze: Math.hypot(state.gaze_x, state.gaze_y),
+        yaw: state.yaw, pitch: state.pitch
+      });
+    },
+
+    computeBaseline: function() {
+      if (this.frames.length < 5) return;
+      // 取最后 5 帧平均
+      var last5 = this.frames.slice(-5);
+      var se = 0, sg = 0, sy = 0, sp = 0;
+      for (var i = 0; i < last5.length; i++) {
+        se += last5[i].ear; sg += last5[i].gaze;
+        sy += last5[i].yaw; sp += last5[i].pitch;
+      }
+      this.baseline_ear = se / 5;
+      this.baseline_gaze = sg / 5;
+      this.baseline_head = { yaw: sy / 5, pitch: sp / 5 };
+      this.calibrated = true;
+
+      // 根据个人 baseline 调整评分阈值
+      this.applyPersonalizedThresholds();
+      console.log('[FacialModeling] 基线建立. EAR:', this.baseline_ear.toFixed(3), 'Gaze:', this.baseline_gaze.toFixed(3));
+    },
+
+    applyPersonalizedThresholds: function() {
+      if (!this.calibrated) return;
+      // 按比例调整 EAR 阈值：如果个人 baseline 偏低，降低所有 EAR 阈值
+      var ratio = this.baseline_ear / this.default_ear;
+      ratio = Math.max(0.7, Math.min(1.3, ratio)); // 限制在 0.7-1.3 范围
+      scoringSystem.params.ear_optimal = 0.22 * ratio;
+      scoringSystem.params.ear_good_threshold = 0.20 * ratio;
+      scoringSystem.params.ear_fair_threshold = 0.18 * ratio;
+      scoringSystem.params.ear_bad_threshold = 0.16 * ratio;
+      config.ear_thresh = 0.21 * ratio;
+    },
+
+    reset: function() {
+      this.calibrated = false; this.frames = [];
+      this.baseline_ear = 0.25; this.baseline_gaze = 0.0;
+      this.baseline_head = { yaw: 0, pitch: 0 };
     }
   };
 
@@ -812,6 +1030,32 @@ var AttentionMonitor = (function() {
       canvasCtx.clearRect(0,0,ce.width,ce.height);
       if(results.multiFaceLandmarks&&results.multiFaceLandmarks.length>0){
         var lm=results.multiFaceLandmarks[0];
+
+        // --- 校准模式：收集数据而非评分 ---
+        if(calibrationSystem.active){
+          var st=attentionAnalyzer.analyzeFrame(lm);
+          // 收集视线数据用于校准
+          var done=calibrationSystem.collectFrame(st.gaze_x, st.gaze_y);
+          // 同时为 FacialModeling 记录帧数据（只在中心点阶段）
+          if(calibrationSystem.step===0) facialModel.recordFrame(st);
+          if(done){
+            // 校准完成：建立个性化基线
+            facialModel.computeBaseline();
+            // 用校准数据初始化 EMA 基线
+            scoringSystem.user_ear_baseline=facialModel.baseline_ear;
+            scoringSystem.user_gaze_stability=facialModel.baseline_gaze;
+            scoringSystem.user_head_stability=Math.abs(facialModel.baseline_head.yaw)+Math.abs(facialModel.baseline_head.pitch);
+            updateBaselineUI();
+            sdk.sessionStartTime=Date.now();
+            document.getElementById('scoreOverlay').style.display='block';
+            document.getElementById('statusOverlay').style.display='flex';
+            sdk._emit('calibrationComplete',{results:calibrationSystem.results,baseline:facialModel});
+            console.log('[AttentionMonitor] 校准完成，进入监测模式');
+          }
+          return; // 校准中不做评分
+        }
+
+        // --- 正常监测模式 ---
         if(sdk.showLandmarks){
           canvasCtx.save();canvasCtx.translate(ce.width,0);canvasCtx.scale(-1,1);
           drawConnectors(canvasCtx,lm,FACEMESH_TESSELATION,{color:'#30a0ff20',lineWidth:0.5});
@@ -822,6 +1066,8 @@ var AttentionMonitor = (function() {
           canvasCtx.restore();
         }
         var st=attentionAnalyzer.analyzeFrame(lm);var sc=scoringSystem.calculate(st);voiceReminder.check(sc,st.attention_label);updateUI(st,sc);
+        // 更新侧栏 EMA 基线显示（每 60 帧刷新一次）
+        if(totalFrames%60===0) updateBaselineUI();
       }else{var st=attentionAnalyzer.analyzeFrame(null);var sc=scoringSystem.calculate(st);updateUI(st,sc);}
       fpsCounter++;var now=performance.now();if(now-lastFpsTime>=1000){currentFps=fpsCounter;fpsCounter=0;lastFpsTime=now;document.getElementById('fpsTag').textContent=currentFps+' FPS';}
     });
@@ -837,13 +1083,13 @@ var AttentionMonitor = (function() {
       await faceMesh.initialize();lf.style.width='80%';
       camera=new Camera(videoEl,{onFrame:async function(){await faceMesh.send({image:videoEl});},width:640,height:480});
       await camera.start();lf.style.width='100%';
-      sdk.running=true;sdk.sessionStartTime=Date.now();
+      sdk.running=true;
       canvasEl.width=videoEl.videoWidth||640;canvasEl.height=videoEl.videoHeight||480;
       document.getElementById('startScreen').classList.add('hidden');
-      document.getElementById('scoreOverlay').style.display='block';
-      document.getElementById('statusOverlay').style.display='flex';
+      // 启动 5 点校准（校准完成后自动进入监测模式）
+      calibrationSystem.start();
       sdk._emit('sessionStart',{timestamp:new Date().toISOString(),config:config});
-      console.log('[AttentionMonitor] v2.1 启动成功');
+      console.log('[AttentionMonitor] v2.2 启动 → 进入校准模式');
     }catch(err){
       btn.textContent='启动摄像头';btn.disabled=false;lb.classList.remove('active');
       alert('无法启动: '+err.message+'\n\n请确保:\n1. 允许摄像头权限\n2. 使用 HTTPS 或 localhost\n3. 网络可访问 CDN');
@@ -860,10 +1106,40 @@ var AttentionMonitor = (function() {
       config:config,timeline:sessionTimeline};
   }
 
+  // === 基线 UI 更新 ===
+  function updateBaselineUI() {
+    var cal = calibrationSystem.isCalibrated();
+    var badge = document.getElementById('calibBadge');
+    badge.textContent = cal ? '已校准' : '未校准';
+    badge.className = 'baseline-badge ' + (cal ? 'calibrated' : 'default');
+
+    var fm = facialModel;
+    document.getElementById('m-bl-ear').textContent = scoringSystem.user_ear_baseline.toFixed(3) + (cal ? '' : ' (默认)');
+    document.getElementById('m-bl-gaze').textContent = '(' + calibrationSystem.reference_gaze_center[0].toFixed(2) + ', ' + calibrationSystem.reference_gaze_center[1].toFixed(2) + ')';
+    document.getElementById('m-bl-tol').textContent = calibrationSystem.gaze_tolerance.toFixed(3) + (cal ? ' (个性化)' : ' (默认)');
+    document.getElementById('m-bl-head').textContent = '(' + scoringSystem.user_head_stability.toFixed(1) + '°)';
+    document.getElementById('m-bl-ema').textContent = 'EAR=' + scoringSystem.user_ear_baseline.toFixed(3) + ' α=0.01';
+  }
+
   // === 公共 API ===
   sdk.toggleVoice=function(){sdk.voiceEnabled=!sdk.voiceEnabled;document.getElementById('btnVoice').classList.toggle('active',sdk.voiceEnabled);};
   sdk.toggleLandmarks=function(){sdk.showLandmarks=!sdk.showLandmarks;document.getElementById('btnLandmarks').classList.toggle('active',sdk.showLandmarks);};
   sdk.resetStats=function(){scoringSystem.reset();attentionAnalyzer.reset();voiceReminder.reset();scoreHistory.length=0;sessionTimeline.length=0;totalFrames=0;focusedFrames=0;updateStatsUI();};
+  sdk.skipCalibration=function(){
+    calibrationSystem.skip();
+    sdk.sessionStartTime=Date.now();
+    document.getElementById('scoreOverlay').style.display='block';
+    document.getElementById('statusOverlay').style.display='flex';
+    updateBaselineUI();
+    console.log('[AttentionMonitor] 跳过校准，使用默认阈值');
+  };
+  sdk.recalibrate=function(){
+    if(!sdk.running)return;
+    facialModel.reset();
+    document.getElementById('scoreOverlay').style.display='none';
+    document.getElementById('statusOverlay').style.display='none';
+    calibrationSystem.start();
+  };
   sdk.exportReport=function(){var j=JSON.stringify(generateReport(),null,2);var b=new Blob([j],{type:'application/json'});var u=URL.createObjectURL(b);var a=document.createElement('a');a.href=u;a.download='attention-report-'+new Date().toISOString().slice(0,19).replace(/:/g,'-')+'.json';a.click();URL.revokeObjectURL(u);};
   sdk.getReport=generateReport;
   sdk.getConfig=function(){return config;};
