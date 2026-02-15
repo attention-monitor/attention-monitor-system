@@ -500,6 +500,7 @@ var AttentionMonitor = (function() {
   // === AttentionAnalyzer (ui.py 第 92-311 行) ===
   var attentionAnalyzer = {
     closed_counter: 0, blinks: 0,
+    blink_grace_frames: 20, // 正常眨眼豁免帧数 (~670ms at 30fps)
     ear_history: [], gaze_history: [], pose_history: [],
     current_state: { attention_label: '初始化中', ear_left: 0, ear_right: 0, yaw: 0, pitch: 0, roll: 0, gaze_x: 0, gaze_y: 0, blink_count: 0, face_detected: false },
 
@@ -530,7 +531,13 @@ var AttentionMonitor = (function() {
       return{x:Math.max(-1.5,Math.min(1.5,nx)),y:Math.max(-1.5,Math.min(1.5,ny))};
     },
     attentionLabel: function(el,er,yaw,pitch,g) {
-      if(!(el>config.ear_thresh&&er>config.ear_thresh)) return '眼睛闭合';
+      if(!(el>config.ear_thresh&&er>config.ear_thresh)){
+        // 正常眨眼豁免：闭眼 ≤ 5 帧(~170ms)时不判定为"眼睛闭合"，维持上一个标签
+        if(this.closed_counter<=this.blink_grace_frames&&this.current_state.attention_label!=='初始化中'){
+          return this.current_state.attention_label; // 保持前一帧的标签
+        }
+        return '眼睛闭合'; // 真正长时间闭眼
+      }
       if(!(Math.abs(yaw)<config.yaw_thresh_deg&&Math.abs(pitch)<config.pitch_thresh_deg)) return '视线偏离';
       if(!(Math.abs(g.x)<config.gaze_off_center&&Math.abs(g.y)<config.gaze_off_center)) return '视线偏移';
       return '专注';
@@ -581,8 +588,15 @@ var AttentionMonitor = (function() {
     // 用于 ADHD 面板的详细信息
     adhdDetail: { p1_triggered: false, p1_penalty: 0, p3_triggered: false, p3_transitions: 0, p3_penalty: 0 },
 
+    // 眨眼豁免：判断当前是否在正常眨眼中
+    _isBlinking: function(){
+      return attentionAnalyzer.closed_counter>0&&attentionAnalyzer.closed_counter<=attentionAnalyzer.blink_grace_frames;
+    },
+
     calcEyeScore: function(el,er,label){
-      if(label==='眼睛闭合')return 0; var avg=(el+er)/2,asym=Math.abs(el-er),s;
+      if(label==='眼睛闭合')return 0;
+      var avg=(el+er)/2;
+      var asym=Math.abs(el-er),s;
       if(avg>=this.params.ear_optimal)s=20;else if(avg>=this.params.ear_good_threshold)s=16;else if(avg>=this.params.ear_fair_threshold)s=12;else if(avg>=this.params.ear_bad_threshold)s=6;else s=0;
       if(asym>this.params.ear_asymmetry_threshold)s-=Math.min(5,asym*20);
       if(this.ear_history.length>=30){var st=calcStd(this.ear_history.slice(-30));if(st<0.02)s+=3;else if(st<0.04)s+=2;}
@@ -673,22 +687,40 @@ var AttentionMonitor = (function() {
     // 主入口 — 额外保存中间步骤供 UI 展示
     _lastCalcSteps: { base:0, preScale:0, postScale:0, final:0 },
 
+    // 分数平滑：3 帧滑动平均，消除抖动
+    _smoothBuffer: [],
+    _smoothScore: function(raw) {
+      this._smoothBuffer.push(raw);
+      if (this._smoothBuffer.length > 3) this._smoothBuffer.shift();
+      var s = 0; for (var i = 0; i < this._smoothBuffer.length; i++) s += this._smoothBuffer[i];
+      return Math.round(s / this._smoothBuffer.length);
+    },
+
     calculate: function(state){
       var now=performance.now(); this.timestamps.push(now);
-      var eye=this.calcEyeScore(state.ear_left,state.ear_right,state.attention_label);
-      var gaze=this.calcGazeScore(state.gaze_x,state.gaze_y,state.attention_label);
-      var head=this.calcHeadScore(state.yaw,state.pitch,state.attention_label);
-      var duration=this.calcDurationScore(state.attention_label,now);
-      var blink=this.calcBlinkScore(state.ear_left,state.ear_right,now);
-      var motor=this.calcMotorScore(state.yaw,state.pitch,now);
+
+      // 眨眼豁免：冻结上一帧全部评分，避免眨眼噪声影响所有维度
+      if(this._isBlinking()&&this.score_history.length>0){
+        this.attention_history.push(state.attention_label); if(this.attention_history.length>600)this.attention_history.shift();
+        return this._lastCalcSteps.final;
+      }
+
+      // 每个子评分取整，消除小数累积导致的抖动
+      var eye=Math.round(this.calcEyeScore(state.ear_left,state.ear_right,state.attention_label));
+      var gaze=Math.round(this.calcGazeScore(state.gaze_x,state.gaze_y,state.attention_label));
+      var head=Math.round(this.calcHeadScore(state.yaw,state.pitch,state.attention_label));
+      var duration=Math.round(this.calcDurationScore(state.attention_label,now));
+      var blink=Math.round(this.calcBlinkScore(state.ear_left,state.ear_right,now));
+      var motor=Math.round(this.calcMotorScore(state.yaw,state.pitch,now));
 
       var base=eye+gaze+head+duration+blink+motor;
-      if(!state.face_detected) base=Math.max(0,base*0.6);
+      if(!state.face_detected) base=Math.max(0,Math.round(base*0.6));
       var emo=this.calcEmotionAdjustment();
       var adhd=this.detectAdhdFeatures(state,now);
       var preScale=base+emo+adhd;
       var postScale=this.nonlinearScale(preScale);
-      var final_=Math.max(0,Math.min(100,postScale));
+      var raw=Math.max(0,Math.min(100,postScale));
+      var final_=this._smoothScore(raw);
 
       this.updateFocusState(state.attention_label,final_,now);
 
@@ -699,9 +731,9 @@ var AttentionMonitor = (function() {
       this.score_history.push(final_); if(this.score_history.length>600)this.score_history.shift();
 
       this.lastDetail={eye:eye,gaze:gaze,head:head,duration:duration,blink:blink,motor:motor,emotion:emo,adhd:adhd};
-      this._lastCalcSteps={base:base,preScale:preScale,postScale:postScale,final:Math.round(final_)};
+      this._lastCalcSteps={base:base,preScale:preScale,postScale:postScale,final:final_};
       this.updateAdaptiveParams(state);
-      return Math.round(final_);
+      return final_;
     },
 
     reset: function(){
