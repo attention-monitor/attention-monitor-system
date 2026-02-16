@@ -556,6 +556,8 @@ var AttentionMonitor = (function() {
         if(calibrationSystem.isCalibrated()){
           gz.x -= calibrationSystem.reference_gaze_center[0];
           gz.y -= calibrationSystem.reference_gaze_center[1];
+          euler.yaw -= facialModel.baseline_head.yaw;
+          euler.pitch -= facialModel.baseline_head.pitch;
         }
         label=this.attentionLabel(el,er,euler.yaw,euler.pitch,gz);
       }
